@@ -101,28 +101,7 @@ class Reader {
 		case 10:
 			return HFun({ args : [for( i in 0..._read() ) HAt(uindex())], ret : HAt(uindex()) });
 		case 11:
-			var p : ObjPrototype = {
-				name : getString(),
-				tsuper : null,
-				fields : null,
-				proto : null,
-				bindings : null,
-				globalValue : null,
-			};
-			var sup = index();
-			if( sup >= 0 ) {
-				p.tsuper = types[sup];
-				if( p.tsuper == null ) throw "assert";
-			}
-			p.globalValue = uindex() - 1;
-			if( p.globalValue < 0 ) p.globalValue = null;
-			var nfields = uindex();
-			var nproto = uindex();
-			var nbindings = uindex();
-			p.fields = [for( i in 0...nfields ) { name : getString(), t : HAt(uindex()) }];
-			p.proto = [for( i in 0...nproto ) { name : getString(), findex : uindex(), pindex : index() }];
-			p.bindings = [for( i in 0...nbindings ) { fid : uindex(), mid : uindex() }];
-			return HObj(p);
+			return HObj(readProto());
 		case 12:
 			return HArray;
 		case 13:
@@ -138,16 +117,55 @@ class Reader {
 		case 18:
 			var name = getString();
 			var global = uindex() - 1;
+			var constructs = [for( i in 0...uindex() ) { name : getString(), params : [for( i in 0...uindex() ) HAt(uindex())] }];
+			if( name == strings[0] && constructs.length == 1 && constructs[0].name == strings[0] ) {
+				// fake enum (closure context)
+				name = null;
+				constructs[0].name = "";
+			}
 			return HEnum({
 				name : name,
 				globalValue : global < 0 ? null : global,
-				constructs : [for( i in 0...uindex() ) { name : getString(), params : [for( i in 0...uindex() ) HAt(uindex())] }],
+				constructs : constructs,
 			});
 		case 19:
 			return HNull(getType());
+		case 20:
+			return HMethod({ args : [for( i in 0..._read() ) HAt(uindex())], ret : HAt(uindex()) });
+		case 21:
+			return HStruct(readProto());
+		case 22:
+			return HPacked({ v : HAt(uindex()) });
+		case 23:
+			return HGUID;
 		case x:
 			throw "Unsupported type value " + x;
 		}
+	}
+
+	function readProto() {
+		var p : ObjPrototype = {
+			name : getString(),
+			tsuper : null,
+			fields : null,
+			proto : null,
+			bindings : null,
+			globalValue : null,
+		};
+		var sup = index();
+		if( sup >= 0 ) {
+			p.tsuper = types[sup];
+			if( p.tsuper == null ) throw "assert";
+		}
+		p.globalValue = uindex() - 1;
+		if( p.globalValue < 0 ) p.globalValue = null;
+		var nfields = uindex();
+		var nproto = uindex();
+		var nbindings = uindex();
+		p.fields = [for( i in 0...nfields ) { name : getString(), t : HAt(uindex()) }];
+		p.proto = [for( i in 0...nproto ) { name : getString(), findex : uindex(), pindex : index() }];
+		p.bindings = [for( i in 0...nbindings ) { fid : uindex(), mid : uindex() }];
+		return p;
 	}
 
 	function fixType( t : HLType ) {
@@ -289,12 +307,13 @@ class Reader {
 		if( i.readString(3) != "HLB" )
 			throw "Invalid HL file";
 		version = _read();
-		if( version <= 1 || version > 4 )
+		if( version <= 1 || version > 5 )
 			throw "HL Version " + version + " is not supported";
 		flags = haxe.EnumFlags.ofInt(uindex());
 		var nints = uindex();
 		var nfloats = uindex();
 		var nstrings = uindex();
+		var nbytes = version >= 5 ? uindex() : 0;
 		var ntypes = uindex();
 		var nglobals = uindex();
 		var nnatives = uindex();
@@ -304,6 +323,11 @@ class Reader {
 		var ints = [for( _ in 0...nints ) i.readInt32()];
 		var floats = [for( _ in 0...nfloats ) i.readDouble()];
 		strings = readStrings(nstrings);
+		var bytes = null, bytesPos = null;
+		if( version >= 5 ) {
+			bytes = i.read(i.readInt32());
+			bytesPos = [for( _ in 0...nbytes ) uindex()];
+		}
 		debugFiles = null;
 		if( flags.has(HasDebug) )
 			debugFiles = readStrings(uindex());
@@ -312,10 +336,10 @@ class Reader {
 			types[i] = readType();
 		for( i in 0...ntypes )
 			switch( types[i] ) {
-			case HFun(f):
+			case HFun(f), HMethod(f):
 				for( i in 0...f.args.length ) f.args[i] = fixType(f.args[i]);
 				f.ret = fixType(f.ret);
-			case HObj(p):
+			case HObj(p), HStruct(p):
 				for( f in p.fields )
 					f.t = fixType(f.t);
 			case HVirtual(fl):
@@ -325,6 +349,8 @@ class Reader {
 				for( c in e.constructs )
 					for( i in 0...c.params.length )
 						c.params[i] = fixType(c.params[i]);
+			case HPacked(t):
+				t.v = fixType(t.v);
 			default:
 			}
 		return {
@@ -333,6 +359,8 @@ class Reader {
 			ints : ints,
 			floats : floats,
 			strings : strings,
+			bytes : bytes,
+			bytesPos : bytesPos,
 			debugFiles : debugFiles,
 			types : types,
 			entryPoint : entryPoint,
@@ -458,6 +486,9 @@ class Reader {
 		2,
 		3,
 		0,
+		3,
+		3,
+		1,
 	];
 
 }

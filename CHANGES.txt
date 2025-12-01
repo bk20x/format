@@ -1,3 +1,33 @@
+2025-03-23: 3.8.0
+	hl: added hl.Native API
+	hl: support GUID type (hl 1.15)
+	map: added sourcemap reader
+	
+2024-01-01: 3.7.0
+	png: added extract
+	hl: added prefetch and asm opcodes
+
+2024-01-01: 3.7.0
+	png: added extract
+	hl: added prefetch and asm opcodes
+	
+2023-06-22: 3.6.0
+	added ICO reader
+	bmp: RLE support
+	hl: support latest bytecode and types
+	amf3/swf : various fixes
+	
+2019-11-27: 3.5.0
+	fix 31-bit int reading/writing (affects swf)
+	abc : fix const trait parsing
+	neko : changed parser
+	hl : 1.11 bytecode support
+	wav : support cue chunks
+
+2019-02-06: 3.4.2
+	HL version 5 reader
+	minor fix in png wrt hxcpp+vc2017
+	
 2018-04-14: 3.4.1
 	HL version 4 reader
 	bugfix JS overflow in HL hashing
@@ -135,8 +165,8 @@
 2010-02-23: 1.15
 	swf : fixed TBackgroundColor (use bigEndian r/w)
 	tools : fixed CRC32 with -cpp
-	jpg : added (contributed by Robert Sköld)
-	bmp : added (contributed by Robert Sköld)
+	jpg : added (contributed by Robert Skï¿½ld)
+	bmp : added (contributed by Robert Skï¿½ld)
 	swf : fixed readLossless with 8bits bitmaps
 	swf : fixed issue when rect is not rounded
 	tools : added Inflate/Deflate support for cpp

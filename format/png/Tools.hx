@@ -1,7 +1,7 @@
 /*
- * format - haXe File Formats
+ * format - Haxe File Formats
  *
- * Copyright (c) 2008-2009, The haXe Project Contributors
+ * Copyright (c) 2008-2009, The Haxe Project Contributors
  * All rights reserved.
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -271,7 +271,7 @@ class Tools {
 			var bgra = format.tools.MemoryBytes.make(start);
 			#end
 
-			var rline = (h.width * h.colbits) >> 3;
+			var rline = stride - 1;
 			for( y in 0...h.height ) {
 				var f = data.get(r++);
 				if( f == 0 ) {
@@ -433,7 +433,8 @@ class Tools {
 							bgra.set(w++, v);
 							bgra.set(w++, v);
 							bgra.set(w++, v);
-							bgra.set(w++, data.get(r++) + bgra.get(w - stride));
+							var va = data.get(r++) + bgra.get(w - stride);
+							bgra.set(w++, va);
 						}
 					else
 						for( x in 0...width ) {
@@ -646,6 +647,138 @@ class Tools {
 		return bgra;
 	}
 
+	public static function extract( d : Data, ?output : haxe.io.Bytes, expandAlpha = false ) : haxe.io.Bytes {
+		var h = getHeader(d);
+		var hasAlpha = false;
+		var channels = switch( h.color ) {
+		case ColIndexed: throw "assert"; // indexed mode is not supported atm
+		case ColGrey(alpha): hasAlpha = alpha; alpha ? 2 : 1;
+		case ColTrue(alpha): hasAlpha = alpha; alpha ? 4 : 3;
+		}
+		if( expandAlpha && hasAlpha )
+			expandAlpha = false;
+		var bpp = h.colbits >> 3;
+		var outChannels = expandAlpha ? channels + 1 : channels;
+		if( output == null )
+			output = haxe.io.Bytes.alloc(outChannels * bpp * h.width * h.height);
+		var data = null;
+		var fullData : haxe.io.BytesBuffer = null;
+		for( c in d )
+			switch( c ) {
+			case CData(b):
+				if( fullData != null )
+					fullData.add(b);
+				else if( data == null )
+					data = b;
+				else {
+					fullData = new haxe.io.BytesBuffer();
+					fullData.add(data);
+					fullData.add(b);
+					data = null;
+				}
+			default:
+			}
+		if( fullData != null )
+			data = fullData.getBytes();
+		if( data == null )
+			throw "Data not found";
+		data = format.tools.Inflate.run(data);
+		var r = 0, w = 0;
+
+		inline function write(v) {
+			output.set(w++, v);
+		}
+		inline function read() {
+			return data.get(r++);
+		}
+
+		inline function writeAlpha() {
+			if( expandAlpha ) {
+				write(0xFF);
+				if( bpp == 2 ) write(0xFF);
+			}
+		}
+
+		var width = h.width;
+		var ncomps = channels * bpp;
+		var upperLine = outChannels * bpp * width;
+		var leftPixel = outChannels * bpp;
+		if( data.length < h.height * (ncomps * width + 1) ) throw "Not enough data";
+
+		var tmp = [for( i in 0...ncomps ) 0];
+		for( y in 0...h.height ) {
+			var f = data.get(r++);
+			if( f != 0 && f != 2 ) {
+				for( i in 0...ncomps )
+					tmp[i] = 0;
+			}
+			switch( f ) {
+			case 0:
+				for( x in 0...width ) {
+					for( i in 0...ncomps )
+						write(read());
+					writeAlpha();
+				}
+			case 1:
+				for( x in 0...width ) {
+					for( i in 0...ncomps ) {
+						tmp[i] += read();
+						write(tmp[i]);
+					}
+					writeAlpha();
+				}
+			case 2:
+				var stride = y == 0 ? 0 : upperLine;
+				for( x in 0...width ) {
+					for( i in 0...ncomps ) {
+						var v = read() + output.get(w - stride);
+						write(v);
+					}
+					writeAlpha();
+				}
+			case 3:
+				var stride = y == 0 ? 0 : upperLine;
+				for( x in 0...width ) {
+					for( i in 0...ncomps ) {
+						tmp[i] = (read() + ((tmp[i] + output.get(w - stride)) >> 1)) & 0xFF;
+						write(tmp[i]);
+					}
+					writeAlpha();
+				}
+			case 4:
+				inline function filter( x, prev ) {
+					var b = y == 0 ? 0 : output.get(w - upperLine);
+					var c = x == 0 || y == 0 ? 0 : output.get(w - upperLine - leftPixel);
+					var k = prev + b - c;
+					var pa = k - prev; if( pa < 0 ) pa = -pa;
+					var pb = k - b; if( pb < 0 ) pb = -pb;
+					var pc = k - c; if( pc < 0 ) pc = -pc;
+					return (pa <= pb && pa <= pc) ? prev : (pb <= pc ? b : c);
+				}
+				for( x in 0...width ) {
+					for( i in 0...ncomps ) {
+						tmp[i] = (filter(x,tmp[i]) + read()) & 0xFF;
+						write(tmp[i]);
+					}
+					writeAlpha();
+				}
+			default:
+				throw "Invalid filter "+f;
+			}
+		}
+		if( h.colbits == 16 ) {
+			// swap bytes order
+			var w = 0;
+			for( x in 0...h.height * width * outChannels ) {
+				var a = output.get(w);
+				var b = output.get(w+1);
+				output.set(w++, b);
+				output.set(w++, a);
+			}
+		}
+		return output;
+	}
+
 	/**
 		Creates PNG data from bytes that contains one bytes (grey values) for each pixel.
 	**/
@@ -660,6 +793,25 @@ class Tools {
 		}
 		var l = new List();
 		l.add(CHeader({ width : width, height : height, colbits : 8, color : ColGrey(false), interlaced : false }));
+		l.add(CData(format.tools.Deflate.run(rgb,level)));
+		l.add(CEnd);
+		return l;
+	}
+
+	/**
+		Creates PNG data from bytes that contains a one byte palette index for each pixel and a separate palette with 3 RGB bytes per color.
+	**/
+	public static function buildIndexed( width : Int, height : Int, data : haxe.io.Bytes, palette : haxe.io.Bytes, ?level = 9 ) : Data {
+		var rgb = haxe.io.Bytes.alloc(width * height + height);
+		var w = 0, r = 0;
+		for( y in 0...height ) {
+			rgb.set(w++,0); // no filter for this scanline
+			for( x in 0...width )
+				rgb.set(w++,data.get(r++));
+		}
+		var l = new List();
+		l.add(CHeader({ width : width, height : height, colbits : 8, color : ColIndexed, interlaced : false }));
+		l.add(CPalette(palette));
 		l.add(CData(format.tools.Deflate.run(rgb,level)));
 		l.add(CEnd);
 		return l;

@@ -1,7 +1,7 @@
 /*
- * format - haXe File Formats
+ * format - Haxe File Formats
  *
- * Copyright (c) 2008, The haXe Project Contributors
+ * Copyright (c) 2008, The Haxe Project Contributors
  * All rights reserved.
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -71,11 +71,11 @@ class Reader {
 		else if( n & 3 == 1 )
 		{
 			// object traits reference
-			n >>= 3;
+			n >>= 2;
 			var refTraits = objectTraitsTable[n];
 			dyn = refTraits.isDynamic;
 			isExternalizable = refTraits.isExternalizable;
-			//className = refTraits.className;
+			className = refTraits.className;
 			//trace(Tools.decode(className));  // TODO make registered class feature or use Type.resolveClass?
 			sealedMemberNames = refTraits.sealedMemberNames;
 		}
@@ -114,7 +114,7 @@ class Reader {
 
 		var h = new Map();
 
-		var ret = AObject( h );
+		var ret = AObject( h, null, className != null ? Tools.decode(className) : null );
 
 		// save new object in reference table
 		complexObjectsTable.push( ret );
@@ -210,7 +210,7 @@ class Reader {
 			a[r] = AInt( i.readInt32() );
 		}
 
-		var ret = fixed? AVector( a ) : AArray( a );
+		var ret = fixed? AVector( a, "Int" ) : AArray( a );
 
 		complexObjectsTable.push(ret);
 
@@ -238,7 +238,7 @@ class Reader {
 			a[r] = ANumber( i.readDouble() );
 		}
 
-		var ret = fixed? AVector( a ) : AArray( a );
+		var ret = fixed? AVector( a, "Number" ) : AArray( a );
 
 		complexObjectsTable.push(ret);
 
@@ -264,7 +264,7 @@ class Reader {
 		if( fixed )
 		{
 			a = new Vector(len);
-			ret = AVector( a );
+			ret = AVector( a, objectTypeName );
 		}
 		else
 		{
@@ -343,6 +343,9 @@ class Reader {
 		if( len == 0 )
 			return AString( "" );  // 0x01 is empty string and is never sent by reference
 		// get the string characters
+		#if haxe4
+		var ret = AString( i.readString(len, UTF8) );
+		#else
 		var u = new haxe.Utf8(len);
 		var c = 0, d = 0, j:Int = 0, it = 0;
 		while (j < len) {
@@ -369,9 +372,13 @@ class Reader {
 				d |= i.readByte() & 0x3f;
 			}
 			j += it + 1;
-			if (d != 0x01) u.addChar(d);
+			if (d != 0x01) {
+				u.addChar(d);
+			}
 		}
 		var ret = AString( u.toString() );
+		#end
+
 		// store the string off for if it gets referenced later
 		stringTable.push(ret);
 		return ret;

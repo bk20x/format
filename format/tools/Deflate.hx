@@ -1,7 +1,7 @@
 /*
- * format - haXe File Formats
+ * format - Haxe File Formats
  *
- * Copyright (c) 2008, The haXe Project Contributors
+ * Copyright (c) 2008, The Haxe Project Contributors
  * All rights reserved.
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -44,7 +44,7 @@ class Deflate {
 		return haxe.io.Bytes.ofData(data);
 		#elseif cpp
 		return cpp.zip.Compress.run(b,level);
-		#elseif ( java || php )
+		#elseif ( java || php || nodejs )
 		return haxe.zip.Compress.run(b,level);
 		#else
 		throw "Deflate is not supported on this platform";

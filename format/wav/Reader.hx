@@ -1,10 +1,10 @@
 /*
- * format - haXe File Formats
+ * format - Haxe File Formats
  *
  *  WAVE File Format
  *  Copyright (C) 2009 Robin Palotai
  *
- * Copyright (c) 2009, The haXe Project Contributors
+ * Copyright (c) 2009, The Haxe Project Contributors
  * All rights reserved.
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -39,7 +39,7 @@ class Reader {
 		this.i = i;
 		i.bigEndian = false;
 	}
-	
+
 	inline function readInt() {
 		#if haxe3
 		return i.readInt32();
@@ -47,7 +47,7 @@ class Reader {
 		return i.readUInt30();
 		#end
 	}
-	
+
 	public function read() : WAVE {
 
 		if (i.readString(4) != "RIFF")
@@ -69,11 +69,11 @@ class Reader {
 					var bextLen = i.readInt32();
 					i.read(bextLen);
 					fmt = i.readString(4);
-				default: 
+				default:
 					break;
 			}
 		}
-		if ( fmt != "fmt " ) 
+		if ( fmt != "fmt " )
 			throw "unsupported wave chunk "+fmt;
 
 		var fmtlen = readInt();
@@ -86,29 +86,58 @@ class Reader {
 		var byteRate = readInt();
 		var blockAlign = i.readUInt16();
 		var bitsPerSample = i.readUInt16();
-		
-		if (fmtlen > 16) 
+
+		if (fmtlen > 16)
 			i.read(fmtlen - 16);
-		
+
 		var nextChunk = i.readString (4);
 		while (nextChunk != "data") {
 			// read past other subchunks
 			i.read(readInt());
 			nextChunk = i.readString (4);
 		}
-		
+
 		// data
 		if (nextChunk != "data")
 			throw "expected data subchunk";
-		
+
 		var datalen = readInt();
-		
-		// Some files report an incorrect length, so we'll
-		// read the whole file, then subtract if necessary
-		var data = i.readAll ();
-		if (data.length > datalen) 
-			data = data.sub (0, datalen);
-		
+
+		var data : haxe.io.Bytes;
+		try {
+			data = i.read(datalen);
+		} catch (e : haxe.io.Eof) {
+			throw "Invalid chunk data length";
+		}
+
+		var cuePoints = new Array<CuePoint>();
+		try {
+
+			while (true) {
+				var nextChunk = i.readString (4);
+				switch (nextChunk) {
+					case "cue ":
+						readInt();
+						var nbCuePoints = readInt();
+
+						for (_ in 0...nbCuePoints) {
+							var cueId = readInt();
+							readInt();
+							i.readString(4);
+							readInt();
+							readInt();
+							var cueSampleOffset = readInt();
+							cuePoints.push({ id : cueId, sampleOffset: cueSampleOffset });
+						}
+					default:
+						var n = readInt();
+						if( n < 0 ) break;
+						i.read(n);
+				}
+			}
+
+		} catch (e : haxe.io.Eof) { }
+
 		return {
 			header: {
 				format: format,
@@ -118,7 +147,8 @@ class Reader {
 				blockAlign: blockAlign,
 				bitsPerSample: bitsPerSample
 			},
-			data: data
+			data: data,
+			cuePoints: cuePoints
 		}
 	}
 
