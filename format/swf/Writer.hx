@@ -221,6 +221,23 @@ class Writer {
 		writeFixed8(d.strength);
 		writeFilterFlags(d.flags,true);
 	}
+	
+	function getFilterGradientSize(f:GradientFilterData): Int {
+		var bits = 0;
+		bits += 8; // colors.length
+		for( c in f.colors )
+			bits += 32; // rgba
+		for( c in f.colors )
+			bits += 8; // position
+		var d = f.data;
+		bits += 32; // blurX
+		bits += 32; // blurY
+		bits += 32; // angle
+		bits += 32; // distance
+		bits += 16; // strength
+		bits += 8; // filterFlags
+		return bits;
+	}
 
 	function writeFilter( f : Filter ) {
 		switch( f ) {
@@ -316,6 +333,15 @@ class Writer {
 		if( po.blendMode != null ) writeBlendMode(po.blendMode);
 		if( po.bitmapCache != null ) o.writeByte(po.bitmapCache);
 		if( po.events != null ) writeClipEvents(po.events);
+	}
+
+	function getFilterListSize(filters : Array<Filter>): Int {
+		var bits = 0;
+		bits += 8;
+		for (filter in filters) {
+			bits += getFilterSize(filter);
+		}
+		return bits;
 	}
 
 	inline function writeInt( v : Int ) {
@@ -1317,6 +1343,127 @@ class Writer {
 		}
 	}
 
+	function minBits(values : Array<Int>):Int {
+    	var max = 0;
+    	for (v in values) {
+        	var abs = v < 0 ? -v : v;
+        	if (abs > max) max = abs;
+    	}
+    	if (max == 0) return 0;
+    
+    	var n = Math.ceil(Math.log(max + 1) / Math.log(2)) + 1; // + 1 for sign
+    	return cast n;
+	}
+
+	function getMatrixSize(m : Matrix):Int {
+	    var bits = 2; // scale and rotate flags
+    
+    	if (m.scale != null) {
+        	var nBits = minBits([cast m.scale.x, cast m.scale.y]);
+	        bits += 5 + (nBits * 2);
+    	}
+	    if (m.rotate != null) {
+	        var nBits = minBits([cast m.rotate.rs0, cast m.rotate.rs1]);
+        	bits += 5 + (nBits * 2);
+    	}
+    	var translateBits = minBits([m.translate.x, m.translate.y]);
+    	bits += 5 + (translateBits * 2);
+    
+    	return bits;
+	}
+	
+	function getFilterSize(f : Filter): Int {
+		var bits = 0;
+		switch( f ) {
+		case FDropShadow(d):
+			bits += 8;
+			bits += 32;  // r g b a 1 byte each
+			bits += 32;  // blurX
+			bits += 32;  // blurY
+			bits += 32;  // angle
+			bits += 32;  // distance
+			bits += 16;  // strength
+			bits += 8;   // filterFlags
+		case FBlur(d):
+			bits += 1;
+			bits += 32; // blurX
+			bits += 32; // blurY
+			bits += 8;  // passes
+		case FGlow(d):
+			bits += 16;
+			bits += 32; // rgba
+			bits += 32; // blurX
+			bits += 32; // blurY
+			bits += 16; // strength
+			bits += 8;  // filterFlags
+		case FBevel(d):
+			bits += 24;
+			bits += 32; // color
+			bits += 32; // color2
+			bits += 32; // blurX
+			bits += 32; // blurY
+			bits += 32; // angle
+			bits += 32; // distance
+			bits += 16; // strength
+			bits += 8; // filterFlags
+		case FGradientGlow(d):
+			bits += 32;
+			bits += getFilterGradientSize(d);
+		case FColorMatrix(d):
+			bits += 48;
+			for( f in d )
+				bits += 32;
+		case FGradientBevel(d):
+			bits += 56;
+			bits += getFilterGradientSize(d);
+		}
+		return bits;
+	}
+	
+	public function getCXASize(c:CXA):Int {
+    	var bits = 2; // add | mult
+    	var nBits = c.nbits; 
+    	if (c.mult != null) bits += 4 + (nBits * 4); // R, G, B, A multipliers
+    	if (c.add != null)  bits += 4 + (nBits * 4); // R, G, B, A adders
+    	return bits;
+	}
+
+	public function getButtonSize(record:ButtonRecord):Int {
+    	var rLen = 5; // Flags(1) + CID(2) + Depth(2)
+    
+    	var bits = getMatrixSize(record.matrix);
+    	bits += getCXASize(record.color);
+    	rLen += Math.ceil(bits / 8);
+
+    	if (record.filters != null) rLen += getFilterListSize(record.filters);
+    	if (record.blendMode != null) rLen += 1;
+    
+    	return rLen;
+	}
+
+
+	public function writeButtonRecord (record : ButtonRecord) {
+		var flags: Int = 0;
+		if (record.stateUp) 	 flags |= 0x01;
+		if (record.stateOver) 	 flags |= 0x02;
+		if (record.stateDown)    flags |= 0x04;
+		if (record.stateHitTest) flags |= 0x08;
+
+		if (record.blendMode != null) {
+			flags |= 0x010;
+		}
+		if (record.filters != null) {
+			flags |= 0x20;
+		}
+		o.writeByte(flags);
+		o.writeUInt16(record.cid);
+		o.writeUInt16(record.depth);
+		writeMatrix(record.matrix);
+		writeCXA(record.color);
+		if (record.filters != null)   writeFilters (record.filters);
+		if (record.blendMode != null) o.writeByte(Type.enumIndex(record.blendMode) + 1);
+	}
+
 	public function writeTag( t : SWFTag ) {
 		switch( t ) {
 		case TUnknown(id,data):
@@ -1333,7 +1480,21 @@ class Writer {
 			writeMorphShape(id, data);
 				
 		case TButton(id, trackAsMenu, records):
-			throw "Button write not implemented";
+			var len = 2; // Id U[16]
+			len += 1; // Reserved U[7], TrackAsMenu U[1]
+			len += 2; // ActionOffset U[16]
+			for (record in records) len += getButtonSize(record);
+			len += 1; // end tag
+
+			writeTID(TagId.DefineButton2, len);
+			o.writeUInt16(id);
+			o.writeByte(trackAsMenu ? 1 : 0);
+			o.writeUInt16(0); //ActionOffset. this has to be zero for ActionScript 3. right now im not sure how to know if this is the case because it relys on a global tag in the SWF file
+			for (record in records) {
+				writeButtonRecord(record);
+			}
+			o.writeByte(0); // end tag
+
 				
 		case TFont(id, data):
 			writeFont(id, data);
